@@ -5,7 +5,9 @@ import subprocess
 import webbrowser
 import sys
 
-GEMINI_DIR = 'gemini_tool'
+# Resolve paths relative to the script location, not the current working directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+GEMINI_DIR = os.path.join(SCRIPT_DIR, 'gemini_tool')
 CLIENT_SECRETS_FILE = os.path.join(GEMINI_DIR, 'client_secrets.json')
 TOKEN_FILE = os.path.join(GEMINI_DIR, 'token.json')
 
@@ -38,8 +40,9 @@ def prompt_for_secrets():
 
 def run_auth_server():
     print("Starting authentication server...")
+    server_script = os.path.join(GEMINI_DIR, 'server.py')
     # Start the server in a separate process
-    server_process = subprocess.Popen([sys.executable, f'{GEMINI_DIR}/server.py'])
+    server_process = subprocess.Popen([sys.executable, server_script])
 
     print("\nServer started at http://localhost:5000")
     print("Opening browser...")

@@ -178,37 +178,30 @@ class GhostballTracker:
         roi_w, roi_h = 0, 0
         roi_img_hsv = hsv_img # Default to full image if no ball found
 
-        # Find ghostball by finding contours in the mask
-        # Use simple chain approximation to save memory/speed
-        ghostball_contours, _ = cv2.findContours(mask_ghostball, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Use moments on the entire mask to find the center (robust)
+        if self.last_ghostball_pixel_count > 800:
+            M = cv2.moments(mask_ghostball, binaryImage=True)
+            if M["m00"] != 0:
+                cX = int(M["m10"] / M["m00"])
+                cY = int(M["m01"] / M["m00"])
+                anchor_center = (cX, cY)
+                anchor_found = True
 
-        # Find the largest contour if any exist
-        if ghostball_contours:
-            largest_gb_contour = max(ghostball_contours, key=cv2.contourArea)
+                # Draw ALL contours for ghostball to show what is being seen
+                if self.show_overlays:
+                    gb_contours, _ = cv2.findContours(mask_ghostball, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if gb_contours:
+                        cv2.drawContours(display_img, gb_contours, -1, (0, 255, 0), 1)
 
-            # Filter by area to avoid noise
-            if cv2.contourArea(largest_gb_contour) > 800:
-                # Compute centroid using moments
-                M = cv2.moments(largest_gb_contour)
-                if M["m00"] != 0:
-                    cX = int(M["m10"] / M["m00"])
-                    cY = int(M["m01"] / M["m00"])
-                    anchor_center = (cX, cY)
-                    anchor_found = True
+                # --- OPTIMIZATION: DEFINE SEARCH BOX ---
+                # We only look for white lines inside a box around the ball
+                roi_x = max(0, anchor_center[0] - self.search_radius)
+                roi_y = max(0, anchor_center[1] - self.search_radius)
+                roi_w = min(w_full, anchor_center[0] + self.search_radius) - roi_x
+                roi_h = min(h_full, anchor_center[1] + self.search_radius) - roi_y
 
-                    # Draw contour on overlay (1px thick)
-                    if self.show_overlays:
-                        cv2.drawContours(display_img, [largest_gb_contour], -1, (0, 255, 0), 1)
-
-                    # --- OPTIMIZATION: DEFINE SEARCH BOX ---
-                    # We only look for white lines inside a box around the ball
-                    roi_x = max(0, anchor_center[0] - self.search_radius)
-                    roi_y = max(0, anchor_center[1] - self.search_radius)
-                    roi_w = min(w_full, anchor_center[0] + self.search_radius) - roi_x
-                    roi_h = min(h_full, anchor_center[1] + self.search_radius) - roi_y
-
-                    # Crop HSV image to the search box
-                    roi_img_hsv = hsv_img[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
+                # Crop HSV image to the search box
+                roi_img_hsv = hsv_img[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
 
         # --- 2. White Line Detection (Inside ROI Only) ---
         # For detection: Apply mask on the CROPPED image (very fast)
@@ -219,38 +212,34 @@ class GhostballTracker:
 
         # Simple line detection: find white pixels and draw ray from ghostball through center
         if anchor_found and white_pixel_count > 30:
-            # Find contours in the cropped mask
-            white_contours, _ = cv2.findContours(mask_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Use moments on the entire cropped mask to find the center (robust to fragmentation)
+            M = cv2.moments(mask_white, binaryImage=True)
 
-            if white_contours:
-                largest_white_contour = max(white_contours, key=cv2.contourArea)
+            if M["m00"] != 0:
+                rel_cX = int(M["m10"] / M["m00"])
+                rel_cY = int(M["m01"] / M["m00"])
 
-                # Check area threshold
-                if cv2.contourArea(largest_white_contour) > 10:
-                     # Compute centroid
-                    M = cv2.moments(largest_white_contour)
-                    if M["m00"] != 0:
-                        rel_cX = int(M["m10"] / M["m00"])
-                        rel_cY = int(M["m01"] / M["m00"])
+                # Convert relative ROI coordinates to global
+                center_x = rel_cX + roi_x
+                center_y = rel_cY + roi_y
 
-                        # Convert relative ROI coordinates to global
-                        center_x = rel_cX + roi_x
-                        center_y = rel_cY + roi_y
+                # Draw ALL contours for white line
+                if self.show_overlays:
+                    white_contours, _ = cv2.findContours(mask_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if white_contours:
+                        # Offset all contours
+                        for contour in white_contours:
+                            contour[:, :, 0] += roi_x
+                            contour[:, :, 1] += roi_y
+                        cv2.drawContours(display_img, white_contours, -1, (0, 255, 255), 1)
 
-                        # Draw contour on overlay (1px thick) - need to offset contour points
-                        if self.show_overlays:
-                            # Offset the contour points by roi_x, roi_y
-                            largest_white_contour[:, :, 0] += roi_x
-                            largest_white_contour[:, :, 1] += roi_y
-                            cv2.drawContours(display_img, [largest_white_contour], -1, (0, 255, 255), 1)
+                # Calculate distance between ghostball and ghost line center
+                distance = np.sqrt((center_x - anchor_center[0])**2 + (center_y - anchor_center[1])**2)
 
-                        # Calculate distance between ghostball and ghost line center
-                        distance = np.sqrt((center_x - anchor_center[0])**2 + (center_y - anchor_center[1])**2)
-
-                        # Only draw if the distance is greater than minimum gap
-                        if distance > self.min_line_gap and self.show_overlays:
-                            # Draw Ray: Ghostball -> Through white line center -> Wall
-                            self.draw_one_way_ray(display_img, anchor_center, (center_x, center_y))
+                # Only draw if the distance is greater than minimum gap
+                if distance > self.min_line_gap and self.show_overlays:
+                    # Draw Ray: Ghostball -> Through white line center -> Wall
+                    self.draw_one_way_ray(display_img, anchor_center, (center_x, center_y))
 
         # Store white pixel count for display
         self.last_white_pixel_count = white_pixel_count

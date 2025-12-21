@@ -26,7 +26,7 @@ class GhostballTracker:
         self.v_max = ghost_line_vals[5]
 
         # Load ghostball HSV values from config
-        ghostball_vals = config['masks'].get('ghost_ball', [140, 192, 82, 170158, 255, 255])
+        ghostball_vals = config['masks'].get('ghost_ball', [140, 192, 82, 170, 255, 255])
         self.gb_h_min = ghostball_vals[0]
         self.gb_s_min = ghostball_vals[1]
         self.gb_v_min = ghostball_vals[2]
@@ -50,7 +50,7 @@ class GhostballTracker:
         cv2.namedWindow('Ghostball Tracker', cv2.WINDOW_NORMAL)
 
     def line_intersection(self, p1, p2, p3, p4):
-        """Find intersection point between line (p1,p2) and line segment (p3,p4)"""
+        # Find intersection point between line (p1,p2) and line segment (p3,p4)
         x1, y1 = p1
         x2, y2 = p2
         x3, y3 = p3
@@ -70,7 +70,7 @@ class GhostballTracker:
         return None
 
     def reflect_vector(self, dx, dy, normal):
-#        Reflect direction vector (dx, dy) across a normal vector 
+        # Reflect direction vector (dx, dy) across a normal vector
         nx, ny = normal
         dot = dx * nx + dy * ny
         rx = dx - 2 * dot * nx
@@ -78,7 +78,7 @@ class GhostballTracker:
         return rx, ry
 
     def draw_one_way_ray(self, img, start_pt, through_pt, color=(0,0,0)):
-#       Draws a 'Laser' starting at start_pt, going through through_pt with rail bounces.
+        # Draws a 'Laser' starting at start_pt, going through through_pt with rail bounces.
         h, w = img.shape[:2]
         x1, y1 = start_pt
         x2, y2 = through_pt
@@ -179,23 +179,36 @@ class GhostballTracker:
         roi_img_hsv = hsv_img # Default to full image if no ball found
 
         # Find ghostball by finding contours in the mask
-        ghostball_pixels = cv2.findNonZero(mask_ghostball)
-        if ghostball_pixels is not None and len(ghostball_pixels) > 800:  # Minimum size to consider
-            anchor_found = True
-            # Calculate center of all ghostball pixels
-            ghostball_pixels_array = ghostball_pixels.reshape(-1, 2)
-            anchor_center = (int(np.mean(ghostball_pixels_array[:, 0])),
-                           int(np.mean(ghostball_pixels_array[:, 1])))
+        # Use simple chain approximation to save memory/speed
+        ghostball_contours, _ = cv2.findContours(mask_ghostball, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            # --- OPTIMIZATION: DEFINE SEARCH BOX ---
-            # We only look for white lines inside a box around the ball
-            roi_x = max(0, anchor_center[0] - self.search_radius)
-            roi_y = max(0, anchor_center[1] - self.search_radius)
-            roi_w = min(w_full, anchor_center[0] + self.search_radius) - roi_x
-            roi_h = min(h_full, anchor_center[1] + self.search_radius) - roi_y
+        # Find the largest contour if any exist
+        if ghostball_contours:
+            largest_gb_contour = max(ghostball_contours, key=cv2.contourArea)
 
-            # Crop HSV image to the search box
-            roi_img_hsv = hsv_img[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
+            # Filter by area to avoid noise
+            if cv2.contourArea(largest_gb_contour) > 800:
+                # Compute centroid using moments
+                M = cv2.moments(largest_gb_contour)
+                if M["m00"] != 0:
+                    cX = int(M["m10"] / M["m00"])
+                    cY = int(M["m01"] / M["m00"])
+                    anchor_center = (cX, cY)
+                    anchor_found = True
+
+                    # Draw contour on overlay (1px thick)
+                    if self.show_overlays:
+                        cv2.drawContours(display_img, [largest_gb_contour], -1, (0, 255, 0), 1)
+
+                    # --- OPTIMIZATION: DEFINE SEARCH BOX ---
+                    # We only look for white lines inside a box around the ball
+                    roi_x = max(0, anchor_center[0] - self.search_radius)
+                    roi_y = max(0, anchor_center[1] - self.search_radius)
+                    roi_w = min(w_full, anchor_center[0] + self.search_radius) - roi_x
+                    roi_h = min(h_full, anchor_center[1] + self.search_radius) - roi_y
+
+                    # Crop HSV image to the search box
+                    roi_img_hsv = hsv_img[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
 
         # --- 2. White Line Detection (Inside ROI Only) ---
         # For detection: Apply mask on the CROPPED image (very fast)
@@ -206,21 +219,38 @@ class GhostballTracker:
 
         # Simple line detection: find white pixels and draw ray from ghostball through center
         if anchor_found and white_pixel_count > 30:
-            # Find all white pixels in the mask
-            white_points = cv2.findNonZero(mask_white)
-            if white_points is not None and len(white_points) > 0:
-                # Calculate center of all white pixels
-                white_points_array = white_points.reshape(-1, 2)
-                center_x = int(np.mean(white_points_array[:, 0])) + roi_x
-                center_y = int(np.mean(white_points_array[:, 1])) + roi_y
+            # Find contours in the cropped mask
+            white_contours, _ = cv2.findContours(mask_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                # Calculate distance between ghostball and ghost line center
-                distance = np.sqrt((center_x - anchor_center[0])**2 + (center_y - anchor_center[1])**2) if anchor_center else 0
+            if white_contours:
+                largest_white_contour = max(white_contours, key=cv2.contourArea)
 
-                # Only draw if the distance is greater than minimum gap
-                if distance > self.min_line_gap and self.show_overlays:
-                    # Draw Ray: Ghostball -> Through white line center -> Wall
-                    self.draw_one_way_ray(display_img, anchor_center, (center_x, center_y))
+                # Check area threshold
+                if cv2.contourArea(largest_white_contour) > 10:
+                     # Compute centroid
+                    M = cv2.moments(largest_white_contour)
+                    if M["m00"] != 0:
+                        rel_cX = int(M["m10"] / M["m00"])
+                        rel_cY = int(M["m01"] / M["m00"])
+
+                        # Convert relative ROI coordinates to global
+                        center_x = rel_cX + roi_x
+                        center_y = rel_cY + roi_y
+
+                        # Draw contour on overlay (1px thick) - need to offset contour points
+                        if self.show_overlays:
+                            # Offset the contour points by roi_x, roi_y
+                            largest_white_contour[:, :, 0] += roi_x
+                            largest_white_contour[:, :, 1] += roi_y
+                            cv2.drawContours(display_img, [largest_white_contour], -1, (0, 255, 255), 1)
+
+                        # Calculate distance between ghostball and ghost line center
+                        distance = np.sqrt((center_x - anchor_center[0])**2 + (center_y - anchor_center[1])**2)
+
+                        # Only draw if the distance is greater than minimum gap
+                        if distance > self.min_line_gap and self.show_overlays:
+                            # Draw Ray: Ghostball -> Through white line center -> Wall
+                            self.draw_one_way_ray(display_img, anchor_center, (center_x, center_y))
 
         # Store white pixel count for display
         self.last_white_pixel_count = white_pixel_count
@@ -231,7 +261,8 @@ class GhostballTracker:
         print(f"Capturing region: {self.monitor}")
         print("Press 'q' to quit. Press 'o' to toggle overlays.")
 
-        target_fps = 60
+        # Limit to 45 FPS
+        target_fps = 45
         frame_time = 1.0 / target_fps
 
         with mss.mss() as sct:
@@ -255,7 +286,7 @@ class GhostballTracker:
 
                 cv2.imshow('Ghostball Tracker', processed_frame)
 
-                # Cap at 60 FPS
+                # Cap at 45 FPS
                 elapsed = time.time() - frame_start
                 sleep_time = frame_time - elapsed
                 if sleep_time > 0:

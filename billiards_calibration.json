@@ -1,0 +1,9 @@
+{
+    "masks": {
+        "ghost_line": [0, 0, 162, 180, 34, 255],
+        "ghost_ball": [140, 192, 82, 170, 255, 255]
+    },
+    "cached_elements": {
+        "rails": []
+    }
+}

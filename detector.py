@@ -20,6 +20,7 @@ class BilliardsDetector:
         self.gpu_frame_bgr = cv2.cuda_GpuMat(h, w, cv2.CV_8UC3)  # type: ignore
         self.gpu_hsv = cv2.cuda_GpuMat(h, w, cv2.CV_8UC3)  # type: ignore
         self.gpu_mask = cv2.cuda_GpuMat(h, w, cv2.CV_8UC1)  # type: ignore
+        self.gpu_blur = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (9, 9), 2)
         
         # GPU detectors
         default_ball = ball_params.get('cue_ball', {})
@@ -52,18 +53,22 @@ class BilliardsDetector:
         }
     
     def upload_frame(self, frame: np.ndarray) -> bool:
-        """Upload frame to GPU and convert to HSV"""
+        # Upload frame to GPU and convert to HSV
         try:
+            if frame is None or frame.size == 0:
+                print("Error: Invalid frame provided for upload")
+                return False
+
             self.gpu_frame_bgra.upload(frame)
             cv2.cuda.cvtColor(self.gpu_frame_bgra, cv2.COLOR_BGRA2BGR, self.gpu_frame_bgr)
             cv2.cuda.cvtColor(self.gpu_frame_bgr, cv2.COLOR_BGR2HSV, self.gpu_hsv)
             return True
         except cv2.error as e:
-            print(f"âœ— GPU upload error: {e}")
+            print(f"GPU upload error: {e}")
             return False
     
     def detect_balls(self) -> Tuple[List[Dict[str, Any]], Optional[Tuple[int, int]]]:
-        """Detect all balls using GPU Hough circles"""
+        # Detect all balls using GPU Hough circles
         ball_types = ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']
         detections = []
         ghost_ball_pos = None
@@ -98,6 +103,10 @@ class BilliardsDetector:
                 gpu_mask_roi = self.gpu_mask.rowRange(y, y + h).colRange(x, x + w)
 
                 cv2.cuda.inRange(gpu_hsv_roi, lower, upper, gpu_mask_roi)
+
+                # Apply Gaussian Blur to reduce noise before detection
+                self.gpu_blur.apply(gpu_mask_roi, gpu_mask_roi)
+
                 circles_gpu = self.gpu_detector_balls.detect(gpu_mask_roi)
             else:
                 # Fallback to old behavior (full frame with optional mask)
@@ -105,6 +114,9 @@ class BilliardsDetector:
 
                 if self.cached_felt_mask_gpu is not None and not self.cached_felt_mask_gpu.empty():
                     cv2.cuda.bitwise_and(self.gpu_mask, self.cached_felt_mask_gpu, self.gpu_mask)  # type: ignore
+
+                # Apply Gaussian Blur to reduce noise before detection
+                self.gpu_blur.apply(self.gpu_mask, self.gpu_mask)
 
                 circles_gpu = self.gpu_detector_balls.detect(self.gpu_mask)
             
@@ -151,7 +163,7 @@ class BilliardsDetector:
         return detections, ghost_ball_pos
     
     def detect_ghost_line_pixels(self, ghost_center: Tuple[int, int]) -> Optional[Tuple[float, float]]:
-        """Detect white line pixels near ghost ball for trajectory fitting"""
+        # Detect white line pixels near ghost ball for trajectory fitting
         if 'ghost_line' not in self.masks or ghost_center is None:
             return None
 
@@ -161,7 +173,8 @@ class BilliardsDetector:
         
         gx, gy = ghost_center
         region_size = self.line_params.get('ghost_line_roi', 65)
-        min_line_gap = 5 # Minimum distance between ghostball and ghost line center
+        # Minimum distance between ghostball and ghost line center
+        min_line_gap = 5
 
         # Define ROI around the ghost ball
         x1_roi = max(int(gx - region_size), 0)
@@ -181,13 +194,20 @@ class BilliardsDetector:
 
         # Find the center of the white pixels in the ROI
         white_points = cv2.findNonZero(mask_roi)
-        if white_points is None or len(white_points) < 30: # Use a threshold for robustness
+
+        # Robustness check: Ensure enough pixels are found to form a line segment
+        if white_points is None or len(white_points) < 30:
             self.last_ghost_line_pixel_count = 0
             return None
 
         white_points_array = white_points.reshape(-1, 2)
         center_x_roi = int(np.mean(white_points_array[:, 0]))
         center_y_roi = int(np.mean(white_points_array[:, 1]))
+
+        # Check if the detected center is too close to the ghost ball (could be noise on the ball itself)
+        dist_to_ghost = math.hypot(center_x_roi + x1_roi - gx, center_y_roi + y1_roi - gy)
+        if dist_to_ghost < min_line_gap:
+             return None
 
         # Direction is from ghost ball center to the center of the white line pixels
         direction = ( (center_x_roi + x1_roi) - gx, (center_y_roi + y1_roi) - gy )
@@ -196,7 +216,7 @@ class BilliardsDetector:
         return direction
     
     def detect_pockets_from_mask(self, mask_cpu: np.ndarray) -> List[Dict[str, Any]]:
-        """Detect pockets using contour analysis"""
+        # Detect pockets using contour analysis
         contours, _ = cv2.findContours(mask_cpu, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         detected_pockets = []
@@ -228,7 +248,7 @@ class BilliardsDetector:
         return detected_pockets
     
     def apply_rail_margins(self, mask: np.ndarray) -> np.ndarray:
-        """Applies the configured edge margins to a mask to isolate rails."""
+        # Applies the configured edge margins to a mask to isolate rails.
         modified_mask = mask.copy()
         margin_left = self.line_params.get('edge_margin_left', 0)
         margin_right = self.line_params.get('edge_margin_right', 0)
@@ -254,7 +274,7 @@ class BilliardsDetector:
         return modified_mask
     
     def detect_rails_from_mask(self, mask_cpu: np.ndarray, frame_width: int, frame_height: int) -> List[Tuple[Tuple[Tuple[int, int], Tuple[int, int]], Tuple[int, int]]]:
-        """Detect rails using contour fitting with edge margins and line shortening"""
+        # Detect rails using contour fitting with edge margins and line shortening
         
         contours, _ = cv2.findContours(mask_cpu, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
@@ -298,7 +318,7 @@ class BilliardsDetector:
         return rails_with_normals
     
     def _merge_rail_gaps(self, rails: List, max_gap: int) -> List:
-        """Merge broken rail segments with tolerance for position and angle"""
+        # Merge broken rail segments with tolerance for position and angle
         if len(rails) <= 1:
             return rails
         
@@ -366,7 +386,7 @@ class BilliardsDetector:
         return merged_rails
     
     def _shorten_rails(self, rails: List, shorten_pixels: int) -> List:
-        """Shorten rail lines by specified pixels from each end"""
+        # Shorten rail lines by specified pixels from each end
         shortened_rails = []
         
         for (p1, p2) in rails:
@@ -391,7 +411,7 @@ class BilliardsDetector:
         return shortened_rails
     
     def _offset_rails(self, rails: List, offset_pixels: int, frame_width: int, frame_height: int) -> List:
-        """Offset rails inward (positive) or outward (negative) from their detected position"""
+        # Offset rails inward (positive) or outward (negative) from their detected position
         offset_rails = []
         
         for (p1, p2) in rails:
@@ -422,7 +442,7 @@ class BilliardsDetector:
     
     def _get_rail_normal(self, p1: Tuple[int, int], p2: Tuple[int, int], 
                          frame_width: int, frame_height: int) -> Tuple[int, int]:
-        """Calculate inward-pointing normal for a rail"""
+        # Calculate inward-pointing normal for a rail
         is_horizontal = abs(p1[1] - p2[1]) < abs(p1[0] - p2[0])
         center_x = (p1[0] + p2[0]) / 2
         center_y = (p1[1] + p2[1]) / 2
@@ -439,9 +459,9 @@ class BilliardsDetector:
                 return (-1, 0)  # Right rail, points left
     
     def cache_felt_mask(self) -> bool:
-        """Cache felt mask to GPU for ball detection masking and extract play area ROI"""
+        # Cache felt mask to GPU for ball detection masking and extract play area ROI
         if "felt" not in self.masks:
-            print("âœ— Felt mask not configured")
+            print("Felt mask not configured")
             return False
 
         vals = self.masks["felt"]
@@ -465,12 +485,62 @@ class BilliardsDetector:
             largest_contour = max(contours, key=cv2.contourArea)
             x, y, w, h = cv2.boundingRect(largest_contour)
             self.play_area_roi = (x, y, w, h)
-            print(f"âœ“ Cached felt mask (GPU+CPU) with play area ROI: {self.play_area_roi}")
+            print(f"Cached felt mask (GPU+CPU) with play area ROI: {self.play_area_roi}")
         else:
-            print("âœ“ Cached felt mask (GPU+CPU) - no contours found for ROI")
+            print("Cached felt mask (GPU+CPU) - no contours found for ROI")
 
         return True
     
     def get_frame(self) -> np.ndarray:
-        """Download current frame from GPU"""
+        # Download current frame from GPU
         return self.gpu_frame_bgr.download()
+
+    def draw_debug_frame(self, frame: np.ndarray, detections: List[Dict[str, Any]],
+                         ghost_ball_pos: Optional[Tuple[int, int]],
+                         rails: List[Tuple[Tuple[Tuple[int, int], Tuple[int, int]], Tuple[int, int]]] = [],
+                         pockets: List[Dict[str, Any]] = []) -> np.ndarray:
+        # Visualize detections for debugging accuracy
+        debug_frame = frame.copy()
+
+        # Draw play area ROI if active
+        if self.play_area_roi:
+            x, y, w, h = self.play_area_roi
+            cv2.rectangle(debug_frame, (x, y), (x+w, y+h), (255, 0, 255), 2)
+            cv2.putText(debug_frame, "ROI Active", (x, y-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+
+        # Draw rails
+        for (p1, p2), normal in rails:
+            cv2.line(debug_frame, p1, p2, (0, 255, 255), 2)
+            # Draw normal
+            mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2)
+            end = (mid[0] + normal[0] * 20, mid[1] + normal[1] * 20)
+            cv2.arrowedLine(debug_frame, mid, end, (0, 0, 255), 1)
+
+        # Draw pockets
+        for pocket in pockets:
+             cv2.circle(debug_frame, pocket['center'], pocket['radius'], (255, 255, 0), 2)
+
+        # Draw detected balls
+        for det in detections:
+            x, y, r = det['x'], det['y'], det['r']
+            name = det['name']
+
+            color = (255, 255, 255)
+            if name == 'solids': color = (0, 0, 255)
+            elif name == 'stripes': color = (255, 0, 0)
+            elif name == 'eight_ball': color = (0, 0, 0)
+            elif name == 'ghost_ball': color = (0, 255, 0)
+
+            cv2.circle(debug_frame, (x, y), r, color, 2)
+            cv2.circle(debug_frame, (x, y), 2, (0, 255, 0), -1) # Center
+            cv2.putText(debug_frame, f"{name}", (x - 20, y - r - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+        # Draw ghost ball position if found separately
+        if ghost_ball_pos:
+            cv2.circle(debug_frame, ghost_ball_pos, 5, (0, 255, 0), -1)
+            cv2.putText(debug_frame, "Ghost Center", (ghost_ball_pos[0]+10, ghost_ball_pos[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+        return debug_frame

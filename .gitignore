@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.log
+gemini_tool/client_secrets.json
+gemini_tool/token.json
+verification/

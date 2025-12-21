@@ -1,0 +1,14 @@
+#!/bin/bash
+# Check if python3 is available
+if command -v python3 &>/dev/null; then
+    PYTHON_CMD=python3
+else
+    PYTHON_CMD=python
+fi
+
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+CLI_SCRIPT="$SCRIPT_DIR/gemini_tool/cli.py"
+
+# Execute the CLI script with all passed arguments
+"$PYTHON_CMD" "$CLI_SCRIPT" "$@"

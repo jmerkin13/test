@@ -6,6 +6,7 @@ import cv2
 import mss
 import numpy as np
 import time
+import math
 from typing import Dict, Any, Optional, List
 
 from config import BilliardsConfig, get_default_ball_params, get_default_pocket_params, get_default_line_params
@@ -13,6 +14,8 @@ from detector import BilliardsDetector
 from logic import BilliardsPhysics
 
 class BilliardsAdjuster:
+    BALL_TYPES = ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']
+
     def __init__(self, config_file: str = 'billiards_calibration.json'):
         # Load config
         self.config = BilliardsConfig(config_file)
@@ -29,11 +32,10 @@ class BilliardsAdjuster:
         
         # Setup parameters
         self.ball_params = {}
-        ball_types = ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']
         loaded_ball_params = self.config.detector_params.get('balls', {})
         
         if 'minDist' in loaded_ball_params:
-            for ball_type in ball_types:
+            for ball_type in self.BALL_TYPES:
                 # Start with a copy of the shared params
                 params = loaded_ball_params.copy()
                 # Ensure area parameters from the root level are also included
@@ -42,7 +44,7 @@ class BilliardsAdjuster:
                 self.ball_params[ball_type] = params
         else:
             # This path assumes a nested structure, which seems to be the new default
-            for ball_type in ball_types:
+            for ball_type in self.BALL_TYPES:
                 self.ball_params[ball_type] = loaded_ball_params.get(ball_type, get_default_ball_params())
         
         self.pocket_params = self.config.detector_params.get('pockets', get_default_pocket_params())
@@ -186,15 +188,14 @@ class BilliardsAdjuster:
         cv2.setTrackbarPos('V_max', self.window_hsv_trackbars, hsv[5])
         
         # Ball Detector Trackbars
-        ball_types = ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']
-        if self.current_mask_name in ball_types:
+        if self.current_mask_name in self.BALL_TYPES:
             params = self.ball_params[self.current_mask_name]
             cv2.setTrackbarPos('Ball_minDist', self.window_detector_controls, params['minDist'])
             cv2.setTrackbarPos('Ball_Canny', self.window_detector_controls, params['cannyThreshold'])
             cv2.setTrackbarPos('Ball_Votes', self.window_detector_controls, int(params['votesThreshold'] * 2))
             cv2.setTrackbarPos('Ball_Outline_Thick', self.window_detector_controls, params.get('lineThickness', 2))
-            cv2.setTrackbarPos('Ball_minArea', self.window_detector_controls, params.get('min_area', 500)) # Corrected key
-            cv2.setTrackbarPos('Ball_maxArea', self.window_detector_controls, params.get('max_area', 5000)) # Corrected key
+            cv2.setTrackbarPos('Ball_minArea', self.window_detector_controls, params.get('min_area', 500))
+            cv2.setTrackbarPos('Ball_maxArea', self.window_detector_controls, params.get('max_area', 5000))
             cv2.setTrackbarPos('Ball_minRadius', self.window_detector_controls, params.get('minRadius', 12))
             cv2.setTrackbarPos('Ball_maxRadius', self.window_detector_controls, params.get('maxRadius', 17))
 
@@ -246,9 +247,7 @@ class BilliardsAdjuster:
         maxRadius = max(1, cv2.getTrackbarPos('Ball_maxRadius', self.window_detector_controls))
 
         # Always update ball params from their trackbars, regardless of current mask
-        ball_types = ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']
-        for ball_type in ball_types:
-            import math
+        for ball_type in self.BALL_TYPES:
             params = self.ball_params[ball_type]
             params['minDist'] = minDist
             params['cannyThreshold'] = canny
@@ -260,8 +259,8 @@ class BilliardsAdjuster:
             params['maxRadius'] = maxRadius
 
             # Ensure maxRadius is always greater than minRadius to prevent OpenCV assertion failure
-            if params['maxRadius'] <= params['minRadius']: #
-                params['maxRadius'] = params['minRadius'] + 1 #
+            if params['maxRadius'] <= params['minRadius']:
+                params['maxRadius'] = params['minRadius'] + 1
         
         # Ensure the detector instance is updated with the new ball params
         self.detector.ball_params = self.ball_params
@@ -327,7 +326,6 @@ class BilliardsAdjuster:
                 show_ghost_line = False
                 show_rails = True
 
-            
             elif self.current_mask_name == 'pockets':
                 # Show pockets and rails for context
                 show_rails = True
@@ -343,7 +341,7 @@ class BilliardsAdjuster:
                 show_cue_line = True
                 show_ghost_line = True
             
-            elif self.current_mask_name in ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']:
+            elif self.current_mask_name in self.BALL_TYPES:
                 # Show only the ball being tuned + table elements for context
                 show_rails = False
                 show_pockets = False
@@ -377,11 +375,10 @@ class BilliardsAdjuster:
             cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
         
         #Filter detections if in tuning mode
-        if self.tuning_mode_active and self.current_mask_name and self.current_mask_name in ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']:
+        if self.tuning_mode_active and self.current_mask_name and self.current_mask_name in self.BALL_TYPES:
             # Case 1: Tuning a specific ball mask (only draw that ball)
             balls_to_draw = [d for d in detections if d['name'] == self.current_mask_name]
         
-        # ADD THIS ELIF BLOCK
         elif self.tuning_mode_active and self.current_mask_name in ['felt', 'rails', 'pockets', 'ghost_line']:
             # Case 2: Tuning a table/line mask (draw NO balls/detections)
             balls_to_draw = []
@@ -416,6 +413,123 @@ class BilliardsAdjuster:
                 cv2.line(frame, (x1, y1), (x2, y2), self.colors['ghost_line'], line_thickness)
         
         return frame
+
+    def _get_rail_detection_from_mask(self, mask_cpu):
+        """Re-usable rail detection logic from mask"""
+        # Apply margins to the mask using the detector's method
+        adjusted_mask = self.detector.apply_rail_margins(mask_cpu)
+
+        # Perform live rail detection on the adjusted mask
+        rails = self.detector.detect_rails_from_mask(adjusted_mask, self.monitor["width"], self.monitor["height"])
+        return rails, adjusted_mask
+
+    def _get_pocket_detection_from_mask(self, mask_cpu):
+        """Re-usable pocket detection logic from mask"""
+        # Get filtered pockets that pass detection criteria
+        preview_pockets = self.detector.detect_pockets_from_mask(mask_cpu)
+        return preview_pockets
+
+    def _update_mask_preview(self):
+        """Updates the mask preview window based on current mask selection"""
+        if not (self.tuning_mode_active and self.current_mask_name):
+            # Show a blank image when no mask is selected
+            cv2.imshow(self.window_hsv_mask, np.zeros((100, 100), dtype=np.uint8))
+            return 0
+
+        current_mask_pixel_count = 0
+        if self.current_mask_name in self.config.masks:
+            vals = self.config.masks[self.current_mask_name]
+            lower = tuple(float(x) for x in vals[:3])
+            upper = tuple(float(x) for x in vals[3:6])
+
+            gpu_mask = cv2.cuda_GpuMat(self.monitor["height"], self.monitor["width"], cv2.CV_8UC1)  # type: ignore
+            cv2.cuda.inRange(self.detector.gpu_hsv, lower, upper, gpu_mask)
+            mask_cpu = gpu_mask.download()
+            current_mask_pixel_count = cv2.countNonZero(mask_cpu)
+
+            preview_image = None
+
+            # Apply margins to mask preview if we're on the rails mask
+            if self.current_mask_name == 'rails':
+                rails, adjusted_mask = self._get_rail_detection_from_mask(mask_cpu)
+                self.physics.cached_rails = rails
+                preview_image = adjusted_mask
+
+            # Apply morphological operations for felt mask
+            elif self.current_mask_name == 'felt':
+                # Mimic detector's kernel from cache_felt_mask (which uses default 3x3)
+                kernel = np.ones((3,3), np.uint8)
+                mask_cpu = cv2.erode(mask_cpu, kernel, iterations=1)
+                mask_cpu = cv2.dilate(mask_cpu, kernel, iterations=1)
+
+                # Convert to color to draw play area outline
+                mask_preview = cv2.cvtColor(mask_cpu, cv2.COLOR_GRAY2BGR)
+
+                # Find contours to show play area boundary
+                contours, _ = cv2.findContours(mask_cpu, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                if contours:
+                    # Find largest contour (should be the felt/play area)
+                    largest_contour = max(contours, key=cv2.contourArea)
+
+                    # Draw the play area outline in cyan
+                    cv2.drawContours(mask_preview, [largest_contour], -1, (255, 255, 0), 3)  # type: ignore
+
+                    # Draw all contours in green for reference
+                    cv2.drawContours(mask_preview, contours, -1, (0, 255, 0), 1)  # type: ignore
+
+                # Use the color preview instead of grayscale
+                preview_image = mask_preview
+
+            # Apply contour finding for pockets mask
+            elif self.current_mask_name == 'pockets':
+                # Show raw HSV mask + filtered contours visualization
+                # Convert to color to show filtering results
+                mask_preview = cv2.cvtColor(mask_cpu, cv2.COLOR_GRAY2BGR)
+
+                # Find ALL contours from the raw mask
+                all_contours, _ = cv2.findContours(mask_cpu.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                # Get filtered pockets that pass detection criteria
+                preview_pockets = self._get_pocket_detection_from_mask(mask_cpu)
+
+                # Update the physics engine for the main display
+                self.live_tuning_pockets = preview_pockets
+                self.physics.cached_pockets = self.live_tuning_pockets
+
+                accepted_contours = [p['contour'] for p in preview_pockets if 'contour' in p]
+
+                # Draw ALL contours in red (rejected by filters)
+                cv2.drawContours(mask_preview, all_contours, -1, (0, 0, 255), 2)  # type: ignore
+
+                # Draw ACCEPTED contours in green (passed filters)
+                cv2.drawContours(mask_preview, accepted_contours, -1, (0, 255, 0), 3)  # type: ignore
+
+                # Use the color preview instead of grayscale
+                preview_image = mask_preview
+
+            # For balls, show the Canny edge map for live tuning
+            elif self.current_mask_name in self.BALL_TYPES:
+                if self.show_canny_preview:
+                    # Get the current Canny threshold from the trackbar
+                    canny_threshold = max(1, cv2.getTrackbarPos('Ball_Canny', self.window_detector_controls))
+
+                    # Apply Canny edge detection to the HSV mask
+                    # The Hough detector's internal Canny uses a high threshold of canny_threshold
+                    # and a low threshold of canny_threshold / 2. We replicate that here.
+                    canny_output = cv2.Canny(mask_cpu, canny_threshold / 2, canny_threshold)
+                    preview_image = canny_output
+                else:
+                    # Show the raw HSV mask if Canny preview is off
+                    preview_image = mask_cpu
+            else:
+                # For other masks (like ghost_line), show the raw HSV mask
+                preview_image = mask_cpu
+
+            # Display the final processed preview image
+            cv2.imshow(self.window_hsv_mask, preview_image)
+
+        return current_mask_pixel_count
     
     def run(self):
         print("Billiards Adjuster")
@@ -473,7 +587,7 @@ class BilliardsAdjuster:
                     )
 
             # Update detection counts based on current mask
-            if self.current_mask_name in ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']:
+            if self.current_mask_name in self.BALL_TYPES:
                 # Count only the currently selected ball type
                 self.ball_detection_count = len([d for d in detections if d['name'] == self.current_mask_name])
             elif self.current_mask_name == 'pockets':
@@ -490,109 +604,7 @@ class BilliardsAdjuster:
             display = self.visualize(display, detections, ghost_line_segments, cue_line, ghost_ball_pos)
             
             # --- Mask Preview Window Logic ---
-            if self.tuning_mode_active and self.current_mask_name:
-                current_mask_pixel_count = 0
-                if self.current_mask_name in self.config.masks:
-                    vals = self.config.masks[self.current_mask_name]
-                    lower = tuple(float(x) for x in vals[:3])
-                    upper = tuple(float(x) for x in vals[3:6])
-                    
-                    gpu_mask = cv2.cuda_GpuMat(self.monitor["height"], self.monitor["width"], cv2.CV_8UC1)  # type: ignore
-                    cv2.cuda.inRange(self.detector.gpu_hsv, lower, upper, gpu_mask)
-                    mask_cpu = gpu_mask.download()
-                    current_mask_pixel_count = cv2.countNonZero(mask_cpu)
-
-                    # --- START: "What You See Is What You Get" Preview Logic ---
-                    preview_image = None
-
-                    # Apply margins to mask preview if we're on the rails mask
-                    if self.current_mask_name == 'rails':
-                        # Apply margins to the mask using the detector's method
-                        adjusted_mask = self.detector.apply_rail_margins(mask_cpu)
-                        
-                        # Perform live rail detection on the adjusted mask
-                        self.physics.cached_rails = self.detector.detect_rails_from_mask(adjusted_mask, self.monitor["width"], self.monitor["height"])
-                        
-                        preview_image = adjusted_mask
-                    
-                    # Apply morphological operations for felt mask
-                    elif self.current_mask_name == 'felt':
-                        # Mimic detector's kernel from cache_felt_mask (which uses default 3x3)
-                        kernel = np.ones((3,3), np.uint8)
-                        mask_cpu = cv2.erode(mask_cpu, kernel, iterations=1)
-                        mask_cpu = cv2.dilate(mask_cpu, kernel, iterations=1)
-
-                        # Convert to color to draw play area outline
-                        mask_preview = cv2.cvtColor(mask_cpu, cv2.COLOR_GRAY2BGR)
-
-                        # Find contours to show play area boundary
-                        contours, _ = cv2.findContours(mask_cpu, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                        if contours:
-                            # Find largest contour (should be the felt/play area)
-                            largest_contour = max(contours, key=cv2.contourArea)
-
-                            # Draw the play area outline in cyan
-                            cv2.drawContours(mask_preview, [largest_contour], -1, (255, 255, 0), 3)  # type: ignore
-
-                            # Draw all contours in green for reference
-                            cv2.drawContours(mask_preview, contours, -1, (0, 255, 0), 1)  # type: ignore
-
-                        # Use the color preview instead of grayscale
-                        preview_image = mask_preview
-
-                    # Apply contour finding for pockets mask
-                    elif self.current_mask_name == 'pockets':
-                        # Show raw HSV mask + filtered contours visualization
-                        # Convert to color to show filtering results
-                        mask_preview = cv2.cvtColor(mask_cpu, cv2.COLOR_GRAY2BGR)
-
-                        # Find ALL contours from the raw mask
-                        all_contours, _ = cv2.findContours(mask_cpu.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                        # Get filtered pockets that pass detection criteria
-                        # This is the single point of live detection for pockets now
-                        preview_pockets = self.detector.detect_pockets_from_mask(mask_cpu)
-                        
-                        # Update the physics engine for the main display
-                        self.live_tuning_pockets = preview_pockets
-                        self.physics.cached_pockets = self.live_tuning_pockets
-                        
-                        accepted_contours = [p['contour'] for p in preview_pockets if 'contour' in p]
-
-                        # Draw ALL contours in red (rejected by filters)
-                        cv2.drawContours(mask_preview, all_contours, -1, (0, 0, 255), 2)  # type: ignore
-
-                        # Draw ACCEPTED contours in green (passed filters)
-                        cv2.drawContours(mask_preview, accepted_contours, -1, (0, 255, 0), 3)  # type: ignore
-
-                        # Use the color preview instead of grayscale
-                        preview_image = mask_preview
-                    
-                    # For balls, show the Canny edge map for live tuning
-                    elif self.current_mask_name in ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']:
-                        if self.show_canny_preview:
-                            # Get the current Canny threshold from the trackbar
-                            canny_threshold = max(1, cv2.getTrackbarPos('Ball_Canny', self.window_detector_controls))
-                            
-                            # Apply Canny edge detection to the HSV mask
-                            # The Hough detector's internal Canny uses a high threshold of canny_threshold
-                            # and a low threshold of canny_threshold / 2. We replicate that here.
-                            canny_output = cv2.Canny(mask_cpu, canny_threshold / 2, canny_threshold)
-                            preview_image = canny_output
-                        else:
-                            # Show the raw HSV mask if Canny preview is off
-                            preview_image = mask_cpu
-                    else:
-                        # For other masks (like ghost_line), show the raw HSV mask
-                        preview_image = mask_cpu
-                    
-                    # Display the final processed preview image
-                    cv2.imshow(self.window_hsv_mask, preview_image)
-                    # --- END: "What You See Is What You Get" Preview Logic ---
-            else:
-                # Show a blank image when no mask is selected
-                cv2.imshow(self.window_hsv_mask, np.zeros((100, 100), dtype=np.uint8))
+            current_mask_pixel_count = self._update_mask_preview()
             
             # FPS calculation
             if time.time() - fps_start > 1:
@@ -610,7 +622,7 @@ class BilliardsAdjuster:
 
                 # Show detection count for current mask
                 count_text = ""
-                if self.current_mask_name in ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']:
+                if self.current_mask_name in self.BALL_TYPES:
                     count_text = f"Balls: {self.ball_detection_count} | Pixels: {current_mask_pixel_count}"
                 elif self.current_mask_name == 'pockets':
                     count_text = f"Detected: {self.ball_detection_count} pocket(s)"
@@ -621,7 +633,7 @@ class BilliardsAdjuster:
 
                 # Show relevant save key for current mask
                 save_key = ""
-                if self.current_mask_name in ['cue_ball', 'ghost_ball', 'solids', 'stripes', 'eight_ball']:
+                if self.current_mask_name in self.BALL_TYPES:
                     save_key = "S=Save Mask | B=Save Ball Params | C=Toggle Canny"
                 elif self.current_mask_name == 'pockets':
                     save_key = "S=Save Mask | P=Save Pocket Params | K=Cache Pockets"
@@ -709,8 +721,9 @@ class BilliardsAdjuster:
                     hsv_cpu = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
                     mask_cpu = cv2.inRange(hsv_cpu, np.array(lower), np.array(upper))
 
-                    adjusted_mask = self.detector.apply_rail_margins(mask_cpu)
-                    self.physics.cached_rails = self.detector.detect_rails_from_mask(adjusted_mask, self.monitor["width"], self.monitor["height"])
+                    # Reuse logic
+                    rails, _ = self._get_rail_detection_from_mask(mask_cpu)
+                    self.physics.cached_rails = rails
                     print(f"✓ Cached {len(self.physics.cached_rails)} rails")
             elif key == ord('k'):
                 # Re-run pocket detection using the current mask & params
@@ -724,7 +737,8 @@ class BilliardsAdjuster:
                     hsv_cpu = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
                     mask_cpu = cv2.inRange(hsv_cpu, np.array(lower), np.array(upper))
 
-                    pockets = self.detector.detect_pockets_from_mask(mask_cpu)
+                    # Reuse logic
+                    pockets = self._get_pocket_detection_from_mask(mask_cpu)
                     self.physics.cached_pockets = pockets
                     print(f"✓ Cached {len(pockets)} pockets")
             elif key == ord('v'):

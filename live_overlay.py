@@ -12,9 +12,14 @@ def main():
 
         print("Press 'q' to quit.")
 
+        # FPS Limiting
+        target_fps = 45
+        frame_time = 1.0 / target_fps
+
         while True:
+            t_start = time.time()
+
             # 1. Capture Screen
-            t0 = time.time()
             sct_img = sct.grab(MONITOR)
             image = np.array(sct_img)
             # mss returns BGRA, convert to BGR for processing
@@ -147,10 +152,17 @@ def main():
                  cv2.circle(final_image, ghostball_center, 1, (0, 255, 0), -1)
 
             # FPS Calculation
-            fps = 1 / (time.time() - t0)
+            elapsed = time.time() - t_start
+            fps = 1 / elapsed if elapsed > 0 else 0
             cv2.putText(final_image, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             cv2.imshow('Live Overlay', final_image)
+
+            # Cap Frame Rate
+            elapsed_total = time.time() - t_start
+            sleep_time = frame_time - elapsed_total
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break

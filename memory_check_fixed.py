@@ -273,6 +273,38 @@ def extend_line_to_boundary(line_coords, ghostball_center, img_shape):
     return (round(start_x), round(start_y), round(extended_x), round(extended_y))
 
 
+def draw_overlay(image, ghostball_center, white_line, extended_line, show_rails=False):
+    """Draw the detection overlay on the image."""
+    output = image.copy()
+
+    # Draw rails if enabled (Using pre-calculated list)
+    if show_rails:
+        for rail in RAILS_LIST:
+            start = rail["start"]
+            end = rail["end"]
+            # Draw rail line (1px thick, cyan)
+            cv2.line(output, start, end, (255, 255, 0), 1)
+            # Draw endpoints (small circles, 2px radius, cyan)
+            cv2.circle(output, start, 2, (255, 255, 0), -1)
+            cv2.circle(output, end, 2, (255, 255, 0), -1)
+
+    # Draw extended line in blue
+    if extended_line is not None:
+        cv2.line(output, (extended_line[0], extended_line[1]),
+                 (extended_line[2], extended_line[3]), (255, 0, 0), 1)
+
+    # Draw detected white line segment in red
+    if white_line is not None:
+        cv2.line(output, (white_line[0], white_line[1]),
+                 (white_line[2], white_line[3]), (0, 0, 255), 1)
+
+    # Draw ghostball center in green
+    if ghostball_center is not None:
+        cv2.circle(output, ghostball_center, 2, (0, 255, 0), -1)
+
+    return output
+
+
 def main():
     # Create screenshots directory
     screenshot_dir = "screenshots"
@@ -282,6 +314,7 @@ def main():
     # Global keyboard listener state
     running = [True]  # Use list to allow modification in nested function
     screenshot_requested = [False]
+    show_rails = [False]  # Toggle for rail overlay
 
     def on_key_press(key):
         """Handle global keyboard events"""
@@ -290,6 +323,9 @@ def main():
                 screenshot_requested[0] = True
             elif hasattr(key, 'char') and key.char in ['q', 'Q']:
                 running[0] = False
+            elif hasattr(key, 'char') and key.char in ['r', 'R']:
+                show_rails[0] = not show_rails[0]
+                print(f"Rails overlay: {'ON' if show_rails[0] else 'OFF'}")
         except AttributeError:
             pass
 
@@ -297,15 +333,20 @@ def main():
     listener = keyboard.Listener(on_press=on_key_press)
     listener.start()
 
-    print("Starting Pool Aim Detection (Headless Mode)...")
+    print("Starting Pool Aim Detection...")
     print(f"Capturing from: {MONITOR}")
-    print("Controls (GLOBAL):")
-    print("  'S' - Save screenshot (raw capture)")
+    print("Controls (GLOBAL - works even when window is not focused):")
+    print("  'S' - Save screenshot")
+    print("  'R' - Toggle rails overlay")
     print("  'Q' - Quit")
     print(f"Screenshots will be saved to: {screenshot_dir}/")
 
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_NAME, MONITOR["width"], MONITOR["height"])
+
     fps_time = time.time()
     frame_count = 0
+    fps = 0
 
     # Frame rate limiter
     TARGET_FPS = 45
@@ -345,21 +386,32 @@ def main():
                             # Extend line to boundary
                             extended_line = extend_line_to_boundary(white_line, ghostball_center, frame.shape)
 
+                # Draw overlay
+                output_frame = draw_overlay(frame, ghostball_center, white_line, extended_line, show_rails[0])
+
                 # Check if screenshot was requested
                 if screenshot_requested[0]:
                     timestamp = time.strftime("%Y%m%d_%H%M%S")
                     filename = f"{screenshot_dir}/screenshot_{timestamp}.png"
-                    cv2.imwrite(filename, frame)
+                    cv2.imwrite(filename, output_frame)
                     print(f"Screenshot saved: {filename}")
                     screenshot_requested[0] = False
 
-                # Calculate FPS (Console only)
+                # Calculate and display FPS
                 frame_count += 1
                 if time.time() - fps_time >= 1.0:
                     fps = frame_count
                     frame_count = 0
                     fps_time = time.time()
-                    print(f"FPS: {fps}")
+
+                cv2.putText(output_frame, f"FPS: {fps}", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                # Show frame
+                cv2.imshow(WINDOW_NAME, output_frame)
+
+                # Keep window responsive
+                cv2.waitKey(1)
 
                 # Enforce frame rate limit
                 elapsed = time.time() - loop_start
@@ -367,8 +419,9 @@ def main():
                     time.sleep(frame_time - elapsed)
     finally:
         # Cleanup guarantees
-        print("Stopping listener...")
+        print("Stopping listener and closing windows...")
         listener.stop()
+        cv2.destroyAllWindows()
         print("Pool Aim Detection stopped.")
 
 

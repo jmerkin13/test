@@ -22,70 +22,78 @@ HOUGH_THRESHOLD = 20
 MIN_LINE_LENGTH = 35
 MAX_LINE_GAP = 5
 
+# --- Static Data Pre-calculation ---
+# Kernel for morphological operations
+KERNEL_3x3 = np.ones((3, 3), np.uint8)
+
 # --- Rail Endpoints (Inner 6 rails) ---
 RAIL_ENDPOINTS = {
     "top_left_rail_start_x": 128,
-    "top_left_rail_start_y": 81,
-    "top_left_rail_end_x": 646,
-    "top_left_rail_end_y": 81,
-    "top_right_rail_start_x": 730,
-    "top_right_rail_start_y": 81,
-    "top_right_rail_end_x": 1246,
-    "top_right_rail_end_y": 81,
-    "bottom_left_rail_start_x": 126,
-    "bottom_left_rail_start_y": 676,
-    "bottom_left_rail_end_x": 647,
-    "bottom_left_rail_end_y": 676,
-    "bottom_right_rail_start_x": 734,
-    "bottom_right_rail_start_y": 676,
-    "bottom_right_rail_end_x": 1252,
-    "bottom_right_rail_end_y": 676,
-    "left_rail_start_x": 85,
-    "left_rail_start_y": 121,
-    "left_rail_end_x": 85,
-    "left_rail_end_y": 632,
-    "right_rail_start_x": 1293,
-    "right_rail_start_y": 123,
-    "right_rail_end_x": 1293,
-    "right_rail_end_y": 628
+  "top_left_rail_start_y": 81,
+  "top_left_rail_end_x": 646,
+  "top_left_rail_end_y": 81,
+  "top_right_rail_start_x": 730,
+  "top_right_rail_start_y": 81,
+  "top_right_rail_end_x": 1246,
+  "top_right_rail_end_y": 81,
+  "bottom_left_rail_start_x": 126,
+  "bottom_left_rail_start_y": 676,
+  "bottom_left_rail_end_x": 647,
+  "bottom_left_rail_end_y": 676,
+  "bottom_right_rail_start_x": 734,
+  "bottom_right_rail_start_y": 676,
+  "bottom_right_rail_end_x": 1252,
+  "bottom_right_rail_end_y": 676,
+  "left_rail_start_x": 85,
+  "left_rail_start_y": 121,
+  "left_rail_end_x": 85,
+  "left_rail_end_y": 632,
+  "right_rail_start_x": 1293,
+  "right_rail_start_y": 123,
+  "right_rail_end_x": 1293,
+  "right_rail_end_y": 628
 }
 
-# --- Pre-calculate Rails List (Fix for allocation churn) ---
-RAILS_LIST = [
-    {
-        "start": (RAIL_ENDPOINTS["top_left_rail_start_x"], RAIL_ENDPOINTS["top_left_rail_start_y"]),
-        "end": (RAIL_ENDPOINTS["top_left_rail_end_x"], RAIL_ENDPOINTS["top_left_rail_end_y"]),
-    },
-    {
-        "start": (RAIL_ENDPOINTS["top_right_rail_start_x"], RAIL_ENDPOINTS["top_right_rail_start_y"]),
-        "end": (RAIL_ENDPOINTS["top_right_rail_end_x"], RAIL_ENDPOINTS["top_right_rail_end_y"]),
-    },
-    {
-        "start": (RAIL_ENDPOINTS["bottom_left_rail_start_x"], RAIL_ENDPOINTS["bottom_left_rail_start_y"]),
-        "end": (RAIL_ENDPOINTS["bottom_left_rail_end_x"], RAIL_ENDPOINTS["bottom_left_rail_end_y"]),
-    },
-    {
-        "start": (RAIL_ENDPOINTS["bottom_right_rail_start_x"], RAIL_ENDPOINTS["bottom_right_rail_start_y"]),
-        "end": (RAIL_ENDPOINTS["bottom_right_rail_end_x"], RAIL_ENDPOINTS["bottom_right_rail_end_y"]),
-    },
-    {
-        "start": (RAIL_ENDPOINTS["left_rail_start_x"], RAIL_ENDPOINTS["left_rail_start_y"]),
-        "end": (RAIL_ENDPOINTS["left_rail_end_x"], RAIL_ENDPOINTS["left_rail_end_y"]),
-    },
-    {
-        "start": (RAIL_ENDPOINTS["right_rail_start_x"], RAIL_ENDPOINTS["right_rail_start_y"]),
-        "end": (RAIL_ENDPOINTS["right_rail_end_x"], RAIL_ENDPOINTS["right_rail_end_y"]),
-    },
-]
+def _build_rails_list():
+    """Reconstruct rails list from flat endpoint dictionary. Run once at startup."""
+    return [
+        {
+            "start": (RAIL_ENDPOINTS["top_left_rail_start_x"], RAIL_ENDPOINTS["top_left_rail_start_y"]),
+            "end": (RAIL_ENDPOINTS["top_left_rail_end_x"], RAIL_ENDPOINTS["top_left_rail_end_y"]),
+        },
+        {
+            "start": (RAIL_ENDPOINTS["top_right_rail_start_x"], RAIL_ENDPOINTS["top_right_rail_start_y"]),
+            "end": (RAIL_ENDPOINTS["top_right_rail_end_x"], RAIL_ENDPOINTS["top_right_rail_end_y"]),
+        },
+        {
+            "start": (RAIL_ENDPOINTS["bottom_left_rail_start_x"], RAIL_ENDPOINTS["bottom_left_rail_start_y"]),
+            "end": (RAIL_ENDPOINTS["bottom_left_rail_end_x"], RAIL_ENDPOINTS["bottom_left_rail_end_y"]),
+        },
+        {
+            "start": (RAIL_ENDPOINTS["bottom_right_rail_start_x"], RAIL_ENDPOINTS["bottom_right_rail_start_y"]),
+            "end": (RAIL_ENDPOINTS["bottom_right_rail_end_x"], RAIL_ENDPOINTS["bottom_right_rail_end_y"]),
+        },
+        {
+            "start": (RAIL_ENDPOINTS["left_rail_start_x"], RAIL_ENDPOINTS["left_rail_start_y"]),
+            "end": (RAIL_ENDPOINTS["left_rail_end_x"], RAIL_ENDPOINTS["left_rail_end_y"]),
+        },
+        {
+            "start": (RAIL_ENDPOINTS["right_rail_start_x"], RAIL_ENDPOINTS["right_rail_start_y"]),
+            "end": (RAIL_ENDPOINTS["right_rail_end_x"], RAIL_ENDPOINTS["right_rail_end_y"]),
+        },
+    ]
+
+# Pre-calculate rails list globally to avoid allocation in loop
+RAILS_LIST = _build_rails_list()
 
 
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
 
-    kernel = np.ones((3, 3), np.uint8)
-    mask_pink = cv2.erode(mask_pink, kernel, iterations=1)
-    mask_pink = cv2.dilate(mask_pink, kernel, iterations=2)
+    # Use pre-allocated kernel to reduce memory churn
+    mask_pink = cv2.erode(mask_pink, KERNEL_3x3, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, KERNEL_3x3, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -281,8 +289,9 @@ def draw_overlay(image, ghostball_center, white_line, extended_line, show_rails=
     """Draw the detection overlay on the image."""
     output = image.copy()
 
-    # Draw rails if enabled (Using pre-calculated list)
+    # Draw rails if enabled
     if show_rails:
+        # Uses globally pre-calculated RAILS_LIST to avoid list creation per frame
         for rail in RAILS_LIST:
             start = rail["start"]
             end = rail["end"]
@@ -356,77 +365,74 @@ def main():
     TARGET_FPS = 45
     frame_time = 1.0 / TARGET_FPS
 
-    try:
-        with mss.mss() as sct:
-            while running[0]:
-                loop_start = time.time()
-                # Capture screen
-                screenshot = sct.grab(MONITOR)
-                # Convert straight to numpy array
-                frame = np.array(screenshot)
+    with mss.mss() as sct:
+        while running[0]:
+            loop_start = time.time()
+            # Capture screen
+            screenshot = sct.grab(MONITOR)
+            frame = np.array(screenshot)
 
-                # Convert BGRA to BGR
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            # Convert BGRA to BGR
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-                # Convert to HSV for detection
-                hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            # Convert to HSV for detection
+            hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-                # Detect ghostball
-                ghostball_center = detect_ghostball(hsv_frame)
+            # Detect ghostball
+            ghostball_center = detect_ghostball(hsv_frame)
 
-                white_line = None
-                extended_line = None
+            white_line = None
+            extended_line = None
 
-                if ghostball_center is not None:
-                    # Get circular ROI around ghostball
-                    image_roi, roi_rect = get_circular_roi(frame, ghostball_center, ROI_RADIUS)
+            if ghostball_center is not None:
+                # Get circular ROI around ghostball
+                image_roi, roi_rect = get_circular_roi(frame, ghostball_center, ROI_RADIUS)
 
-                    # Only proceed if ROI is valid
-                    if image_roi is not None and roi_rect is not None:
-                        # Detect white aim line
-                        white_line = detect_white_line(image_roi, ghostball_center, roi_rect)
+                # Only proceed if ROI is valid
+                if image_roi is not None and roi_rect is not None:
+                    # Detect white aim line
+                    white_line = detect_white_line(image_roi, ghostball_center, roi_rect)
 
-                        if white_line is not None:
-                            # Extend line to boundary
-                            extended_line = extend_line_to_boundary(white_line, ghostball_center, frame.shape)
+                    if white_line is not None:
+                        # Extend line to boundary
+                        extended_line = extend_line_to_boundary(white_line, ghostball_center, frame.shape)
 
-                # Draw overlay
-                output_frame = draw_overlay(frame, ghostball_center, white_line, extended_line, show_rails[0])
+            # Draw overlay
+            output_frame = draw_overlay(frame, ghostball_center, white_line, extended_line, show_rails[0])
 
-                # Check if screenshot was requested
-                if screenshot_requested[0]:
-                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    filename = f"{screenshot_dir}/screenshot_{timestamp}.png"
-                    cv2.imwrite(filename, output_frame)
-                    print(f"Screenshot saved: {filename}")
-                    screenshot_requested[0] = False
+            # Check if screenshot was requested
+            if screenshot_requested[0]:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"{screenshot_dir}/screenshot_{timestamp}.png"
+                cv2.imwrite(filename, output_frame)
+                print(f"Screenshot saved: {filename}")
+                screenshot_requested[0] = False
 
-                # Calculate and display FPS
-                frame_count += 1
-                if time.time() - fps_time >= 1.0:
-                    fps = frame_count
-                    frame_count = 0
-                    fps_time = time.time()
+            # Calculate and display FPS
+            frame_count += 1
+            if time.time() - fps_time >= 1.0:
+                fps = frame_count
+                frame_count = 0
+                fps_time = time.time()
 
-                cv2.putText(output_frame, f"FPS: {fps}", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(output_frame, f"FPS: {fps}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                # Show frame
-                cv2.imshow(WINDOW_NAME, output_frame)
+            # Show frame
+            cv2.imshow(WINDOW_NAME, output_frame)
 
-                # Keep window responsive
-                cv2.waitKey(1)
+            # Keep window responsive
+            cv2.waitKey(1)
 
-                # Enforce frame rate limit
-                elapsed = time.time() - loop_start
-                if elapsed < frame_time:
-                    time.sleep(frame_time - elapsed)
-    finally:
-        # Cleanup guarantees
-        print("Stopping listener and closing windows...")
-        listener.stop()
-        cv2.destroyAllWindows()
-        print("Pool Aim Detection stopped.")
+            # Enforce frame rate limit
+            elapsed = time.time() - loop_start
+            if elapsed < frame_time:
+                time.sleep(frame_time - elapsed)
+
+    # Cleanup
+    listener.stop()
+    cv2.destroyAllWindows()
+    print("Pool Aim Detection stopped.")
 
 
 if __name__ == "__main__":

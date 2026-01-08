@@ -25,29 +25,29 @@ MAX_LINE_GAP = 5
 # --- Rail Endpoints (Inner 6 rails) ---
 RAIL_ENDPOINTS = {
     "top_left_rail_start_x": 128,
-    "top_left_rail_start_y": 81,
-    "top_left_rail_end_x": 646,
-    "top_left_rail_end_y": 81,
-    "top_right_rail_start_x": 730,
-    "top_right_rail_start_y": 81,
-    "top_right_rail_end_x": 1246,
-    "top_right_rail_end_y": 81,
-    "bottom_left_rail_start_x": 126,
-    "bottom_left_rail_start_y": 676,
-    "bottom_left_rail_end_x": 647,
-    "bottom_left_rail_end_y": 676,
-    "bottom_right_rail_start_x": 734,
-    "bottom_right_rail_start_y": 676,
-    "bottom_right_rail_end_x": 1252,
-    "bottom_right_rail_end_y": 676,
-    "left_rail_start_x": 85,
-    "left_rail_start_y": 121,
-    "left_rail_end_x": 85,
-    "left_rail_end_y": 632,
-    "right_rail_start_x": 1293,
-    "right_rail_start_y": 123,
-    "right_rail_end_x": 1293,
-    "right_rail_end_y": 628
+  "top_left_rail_start_y": 81,
+  "top_left_rail_end_x": 646,
+  "top_left_rail_end_y": 81,
+  "top_right_rail_start_x": 730,
+  "top_right_rail_start_y": 81,
+  "top_right_rail_end_x": 1246,
+  "top_right_rail_end_y": 81,
+  "bottom_left_rail_start_x": 126,
+  "bottom_left_rail_start_y": 676,
+  "bottom_left_rail_end_x": 647,
+  "bottom_left_rail_end_y": 676,
+  "bottom_right_rail_start_x": 734,
+  "bottom_right_rail_start_y": 676,
+  "bottom_right_rail_end_x": 1252,
+  "bottom_right_rail_end_y": 676,
+  "left_rail_start_x": 85,
+  "left_rail_start_y": 121,
+  "left_rail_end_x": 85,
+  "left_rail_end_y": 632,
+  "right_rail_start_x": 1293,
+  "right_rail_start_y": 123,
+  "right_rail_end_x": 1293,
+  "right_rail_end_y": 628
 }
 
 # --- Pre-calculate Rails List ---
@@ -80,10 +80,17 @@ RAILS_LIST = [
     },
 ]
 
+# --- Pre-calculate Morphological Kernel ---
+MORPH_KERNEL = np.ones((3, 3), np.uint8)
+
 
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    # Use pre-calculated kernel
+    mask_pink = cv2.erode(mask_pink, MORPH_KERNEL, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, MORPH_KERNEL, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -279,8 +286,9 @@ def draw_overlay(image, ghostball_center, white_line, extended_line, show_rails=
     """Draw the detection overlay on the image."""
     output = image.copy()
 
-    # Draw rails if enabled (using pre-calculated global list)
+    # Draw rails if enabled
     if show_rails:
+        # Use pre-calculated rails list
         for rail in RAILS_LIST:
             start = rail["start"]
             end = rail["end"]
@@ -418,12 +426,10 @@ def main():
                 elapsed = time.time() - loop_start
                 if elapsed < frame_time:
                     time.sleep(frame_time - elapsed)
-
     except Exception as e:
         print(f"An error occurred: {e}")
         import traceback
         traceback.print_exc()
-
     finally:
         # Cleanup guarantees
         print("Cleaning up resources...")

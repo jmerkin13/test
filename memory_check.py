@@ -80,10 +80,18 @@ RAILS_LIST = [
     },
 ]
 
+# --- Pre-calculate Morphological Kernel ---
+# Prevents re-allocating this small array 45 times a second.
+KERNEL = np.ones((3, 3), np.uint8)
+
 
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    # Use pre-calculated global kernel
+    mask_pink = cv2.erode(mask_pink, KERNEL, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, KERNEL, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 

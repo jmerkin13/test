@@ -22,6 +22,10 @@ HOUGH_THRESHOLD = 20
 MIN_LINE_LENGTH = 35
 MAX_LINE_GAP = 5
 
+# --- Global Reusable Matrices ---
+# Pre-allocate to prevent per-frame allocation
+KERNEL_3X3 = np.ones((3, 3), np.uint8)
+
 # --- Rail Endpoints (Inner 6 rails) ---
 RAIL_ENDPOINTS = {
     "top_left_rail_start_x": 128,
@@ -84,6 +88,10 @@ RAILS_LIST = [
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    # Use pre-allocated global kernel
+    mask_pink = cv2.erode(mask_pink, KERNEL_3X3, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, KERNEL_3X3, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -279,8 +287,9 @@ def draw_overlay(image, ghostball_center, white_line, extended_line, show_rails=
     """Draw the detection overlay on the image."""
     output = image.copy()
 
-    # Draw rails if enabled (using pre-calculated global list)
+    # Draw rails if enabled
     if show_rails:
+        # Use pre-calculated RAILS_LIST
         for rail in RAILS_LIST:
             start = rail["start"]
             end = rail["end"]
@@ -425,11 +434,11 @@ def main():
         traceback.print_exc()
 
     finally:
-        # Cleanup guarantees
+        # Cleanup
         print("Cleaning up resources...")
         try:
             listener.stop()
-        except:
+        except Exception:
             pass
         cv2.destroyAllWindows()
         print("Pool Aim Detection stopped.")

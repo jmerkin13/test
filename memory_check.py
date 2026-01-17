@@ -50,9 +50,14 @@ RAIL_ENDPOINTS = {
     "right_rail_end_y": 628
 }
 
+# --- Pre-calculated Kernel ---
+# Pre-calculating the kernel prevents creating a new numpy array
+# every frame (45 times a second), reducing memory churn.
+MORPH_KERNEL = np.ones((3, 3), np.uint8)
+
 # --- Pre-calculate Rails List ---
 # Pre-calculating this list prevents creating a new list of dictionaries
-# every single frame (45 times a second), reducing memory churn.
+# every single frame, reducing memory churn.
 RAILS_LIST = [
     {
         "start": (RAIL_ENDPOINTS["top_left_rail_start_x"], RAIL_ENDPOINTS["top_left_rail_start_y"]),
@@ -84,6 +89,9 @@ RAILS_LIST = [
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    mask_pink = cv2.erode(mask_pink, MORPH_KERNEL, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, MORPH_KERNEL, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -279,7 +287,7 @@ def draw_overlay(image, ghostball_center, white_line, extended_line, show_rails=
     """Draw the detection overlay on the image."""
     output = image.copy()
 
-    # Draw rails if enabled (using pre-calculated global list)
+    # Draw rails if enabled
     if show_rails:
         for rail in RAILS_LIST:
             start = rail["start"]

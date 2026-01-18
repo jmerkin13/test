@@ -50,9 +50,11 @@ RAIL_ENDPOINTS = {
     "right_rail_end_y": 628
 }
 
-# --- Pre-calculate Rails List ---
-# Pre-calculating this list prevents creating a new list of dictionaries
-# every single frame (45 times a second), reducing memory churn.
+# --- Pre-calculated Resources ---
+# Optimization: Create kernel once instead of every frame
+KERNEL = np.ones((3, 3), np.uint8)
+
+# Optimization: Pre-calculate rails list to avoid allocation every frame
 RAILS_LIST = [
     {
         "start": (RAIL_ENDPOINTS["top_left_rail_start_x"], RAIL_ENDPOINTS["top_left_rail_start_y"]),
@@ -80,10 +82,13 @@ RAILS_LIST = [
     },
 ]
 
-
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    # Use global KERNEL
+    mask_pink = cv2.erode(mask_pink, KERNEL, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, KERNEL, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -425,7 +430,7 @@ def main():
         traceback.print_exc()
 
     finally:
-        # Cleanup guarantees
+        # Cleanup
         print("Cleaning up resources...")
         try:
             listener.stop()

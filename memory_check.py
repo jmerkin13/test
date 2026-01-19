@@ -3,6 +3,7 @@ import numpy as np
 import mss
 import time
 import os
+import traceback
 from pynput import keyboard
 
 # --- Configuration ---
@@ -50,9 +51,8 @@ RAIL_ENDPOINTS = {
     "right_rail_end_y": 628
 }
 
-# --- Pre-calculate Rails List ---
-# Pre-calculating this list prevents creating a new list of dictionaries
-# every single frame (45 times a second), reducing memory churn.
+# --- Pre-calculated Constants (Memory Optimization) ---
+# Prevent per-frame allocation
 RAILS_LIST = [
     {
         "start": (RAIL_ENDPOINTS["top_left_rail_start_x"], RAIL_ENDPOINTS["top_left_rail_start_y"]),
@@ -80,10 +80,16 @@ RAILS_LIST = [
     },
 ]
 
+MORPH_KERNEL = np.ones((3, 3), np.uint8)
+
 
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    # Use pre-calculated kernel
+    mask_pink = cv2.erode(mask_pink, MORPH_KERNEL, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, MORPH_KERNEL, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -421,7 +427,6 @@ def main():
 
     except Exception as e:
         print(f"An error occurred: {e}")
-        import traceback
         traceback.print_exc()
 
     finally:

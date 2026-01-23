@@ -22,6 +22,10 @@ HOUGH_THRESHOLD = 20
 MIN_LINE_LENGTH = 35
 MAX_LINE_GAP = 5
 
+# --- Pre-calculated Objects (Optimization) ---
+# Pre-allocate kernel to avoid per-frame allocation
+KERNEL = np.ones((3, 3), np.uint8)
+
 # --- Rail Endpoints (Inner 6 rails) ---
 RAIL_ENDPOINTS = {
     "top_left_rail_start_x": 128,
@@ -50,7 +54,6 @@ RAIL_ENDPOINTS = {
     "right_rail_end_y": 628
 }
 
-# --- Pre-calculate Rails List ---
 # Pre-calculating this list prevents creating a new list of dictionaries
 # every single frame (45 times a second), reducing memory churn.
 RAILS_LIST = [
@@ -84,6 +87,10 @@ RAILS_LIST = [
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    # Use pre-calculated global KERNEL
+    mask_pink = cv2.erode(mask_pink, KERNEL, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, KERNEL, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -360,6 +367,7 @@ def main():
                 loop_start = time.time()
                 # Capture screen
                 screenshot = sct.grab(MONITOR)
+                # Convert straight to numpy array
                 frame = np.array(screenshot)
 
                 # Convert BGRA to BGR

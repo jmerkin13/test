@@ -22,6 +22,10 @@ HOUGH_THRESHOLD = 20
 MIN_LINE_LENGTH = 35
 MAX_LINE_GAP = 5
 
+# --- Pre-calculated Kernel ---
+# Pre-calculating the kernel prevents recreating it every frame.
+MORPH_KERNEL = np.ones((3, 3), np.uint8)
+
 # --- Rail Endpoints (Inner 6 rails) ---
 RAIL_ENDPOINTS = {
     "top_left_rail_start_x": 128,
@@ -84,6 +88,10 @@ RAILS_LIST = [
 def detect_ghostball(hsv_image):
     """Detect the pink ghostball and return its center coordinates."""
     mask_pink = cv2.inRange(hsv_image, LOWER_PINK, UPPER_PINK)
+
+    # Use pre-calculated kernel
+    mask_pink = cv2.erode(mask_pink, MORPH_KERNEL, iterations=1)
+    mask_pink = cv2.dilate(mask_pink, MORPH_KERNEL, iterations=2)
 
     contours, _ = cv2.findContours(mask_pink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
